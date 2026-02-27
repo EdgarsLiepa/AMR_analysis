@@ -37,6 +37,7 @@ include { REMOVE_HOST_HOSTILE } from "../modules/preProc.nf" addParams(OUTPUT: "
 process ARG_BOWTIE {
     tag "${meta.id}" 
     publishDir "${params.outdir}/Bowtie", mode: 'symlink'
+    container 'staphb/bowtie2:2.4.4'
 
     input:
     tuple val(meta), path(reads)
@@ -50,8 +51,6 @@ process ARG_BOWTIE {
 
     script:
     """
-    module load 'bio/bowtie2/2.4.2'
-    module load 'bio/samtools-1.9'
 
     # --------------------------------------------------------------------------------
     # Align microbial reads to the ResFinder database
@@ -73,6 +72,7 @@ process ARG_BOWTIE {
 process ARG_MAPPED {
     tag "${meta.id}"        
     publishDir "${params.outdir}/Bowtie", mode: 'symlink'
+    container 'quay.io/biocontainers/samtools:1.19.2--h50ea8bc_0'
 
     input:
     tuple val(meta), path(bam)
@@ -114,6 +114,7 @@ process ARG_MAPPED {
 process ARG_COUNT {
     tag "${meta.id}"
     publishDir "${params.outdir}/Bowtie/Counts", mode: 'copy'
+    container 'quay.io/biocontainers/samtools:1.19.2--h50ea8bc_0'
 
     input:
     tuple val(meta), path(bam), path(bai)
@@ -134,35 +135,6 @@ process ARG_COUNT {
     """
 }
 
-
-process MERGE_ARG_COUNTS {
-    publishDir "${params.outdir}/Final_Results", mode: 'copy'
-
-    input:
-    // Takes a collected list of all individual count files
-    path count_files
-
-    output:
-    path "Master_ARG_Count_Matrix.tsv"
-
-    script:
-    """
-    # 1. Extract the 'Gene' column from the very first file to use as our row names
-    first_file=\$(ls *_ARG_counts.tsv | head -n 1)
-    cut -f1 \$first_file > __genes.tmp
-
-    # 2. Extract ONLY the count columns (Column 2) from all files and save as temps
-    for f in *_ARG_counts.tsv; do
-        cut -f2 \$f > \${f}.col.tmp
-    done
-
-    # 3. Paste the genes and all the sample count columns together side-by-side
-    paste __genes.tmp *.col.tmp > Master_ARG_Count_Matrix.tsv
-
-    # 4. Clean up the temporary files
-    rm *.tmp
-    """
-}
 
 workflow {
 

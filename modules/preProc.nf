@@ -1,6 +1,7 @@
 process FASTQC_RAW {
     tag "${meta.id}"
     publishDir "${params.outdir}/fastqc_raw"
+    container 'quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0'
     
     input:
     tuple val(meta), path(reads)
@@ -11,7 +12,7 @@ process FASTQC_RAW {
     
     script:
     """
-    ~/tools/FastQC/fastqc -t ${task.cpus} ${reads}
+    fastqc -t ${task.cpus} ${reads}
     """
 }
 
@@ -56,6 +57,7 @@ process FASTP_DECONTAMINATE {
 process FASTQC_CLEAN {
     tag "${meta.id}"
     publishDir "${params.outdir}/fastqc_clean"
+    container 'quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0'
     
     input:
     tuple val(meta), path(reads)
@@ -66,13 +68,13 @@ process FASTQC_CLEAN {
     
     script:
     """
-    ~/tools/FastQC/fastqc -t ${task.cpus} ${reads}
+    fastqc -t ${task.cpus} ${reads}
     """
 }
 
 
 process MULTIQC {
-    conda '/home_beegfs/edgars01/.conda/envs/antibiotic_rez'
+    container 'quay.io/biocontainers/multiqc:1.21--pyhdfd78af_0'
     publishDir "${params.OUTPUT}", mode: 'copy'
     
     input:
