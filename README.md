@@ -22,15 +22,14 @@ The pipeline executes the following steps:
 
 ## Requirements
 
+### Software & Packages
 * Nextflow (DSL2)
 * Python 3.x with `pandas` (for `mergeGeneCounts.py`)
-* Dependencies (handled via modules or containers in the scripts):
-* FastQC
-* fastp
-* MultiQC
-* Hostile
-* Bowtie2
-* Samtools (v1.9)
+* Container Engine (Docker/Apptainer/Singularity) recommended for reproducible execution.
+
+### Required Databases & References
+* **ResFinder Database**: A local, Bowtie2-indexed copy of the ResFinder database is required for AMR gene quantification. Set the path using the `params.resfinder_db` parameter.
+* **Hostile Human Reference**: The pipeline requires the Hostile human Telomere-to-Telomere (T2T) masked reference index (`human-t2t-hla-argos985`) for host read depletion. Ensure this index is available and its parent directory is passed to the `hostile_idx_ch` channel.
 
 
 
