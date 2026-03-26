@@ -2,20 +2,21 @@
 
 nextflow.enable.dsl = 2
 
-params.metaphlan_db = 
-params.resfinder_db = "DB/resfinder_db/all"
+params.metaphlan_db = "/home_beegfs/edgars01/DB/metaphlan_db"
+params.resfinder_db = "/home_beegfs/edgars01/DB/resfinder_db/all"
 
-params.projPath = 
-params.outdir = 
+params.projPath = "/home_beegfs/edgars01/Antibiotic_Resistance/Metagenome/AR_Human"
+params.outdir = "${params.projPath}/results/2026-02-19"
 
-params.samplesheet = 
+params.samplesheet = "${params.projPath}/data/2026-02-19/samplesheet_2026-02-19.tsv"
 
-params.reads_dir =   // Directory containing all FASTQ files
+params.reads_dir = "${params.projPath}/data/2026-02-19/merged_reads"  // Directory containing all FASTQ files
 
 // Define the folder containing the index files
-hostile_idx_ch = Channel.fromPath('', type: 'dir').first()
+hostile_idx_ch = Channel.fromPath('/home_beegfs/edgars01/.local/share/hostile', type: 'dir').first()
 
 
+//params.human_reference = '/path/to/human_genome.fasta'
     
 // Fastp quality parameters
 params.qualified_quality_phred = 20
@@ -33,6 +34,30 @@ include { MULTIQC as MULTIQC_CLEAN } from "../modules/preProc.nf" addParams(OUTP
 include { REMOVE_HOST_HOSTILE } from "../modules/preProc.nf" addParams(OUTPUT: "${params.outdir}/host_removed")
 
 
+
+process METAPHLAN {
+    
+    publishDir "${params.outdir}/Metaphlan", mode: 'copy'
+
+    input:
+    tuple val(sample), path(reads)
+
+    output:
+    path "${sample}_bowtie2out.bz2"
+    path "${sample}_profile.txt"
+
+    cpus 8
+    memory '64 GB'
+    time = '1d'
+
+    script:
+    """
+    module load 'bio/metaphlan4/4.0.6-conda'
+
+    metaphlan ${reads[0]},${reads[1]} --input_type fastq --bowtie2db ${params.metaphlan_db} \
+    --bowtie2out ${sample}_bowtie2out.bz2 --nproc ${task.cpus} -o ${sample}_profile.txt
+    """
+}
 
 process ARG_BOWTIE {
     tag "${meta.id}" 
@@ -68,6 +93,46 @@ process ARG_BOWTIE {
     -D 20 -R 3 -N 1 -L 20 -i S,1,0.5 \
     --threads ${task.cpus} | samtools view -@ ${task.cpus} -Sb - > ${meta.id}_ARG.bam
     """
+}
+
+process ARG_KMA {
+    tag "${meta.id}" 
+    publishDir "${params.outdir}/KMA", mode: 'symlink'
+
+    input:
+    tuple val(meta), path(reads)
+
+    output:
+    tuple val(meta), path("${meta.id}.res"), emit: res
+    path "${meta.id}_ARG_counts.tsv", emit: counts    
+
+    cpus 8
+    memory '64 GB'
+    time = '1d'
+
+    script:
+    
+    """
+
+   
+    # -ipe: Paired-end reads
+    # -t_db: KMA database prefix
+    # -1t1: One read to one template (forces strict assignment, prevents double-counting)
+    # -nc: No consensus building (saves memory/time)
+     ~/tools/kma/kma -ipe ${reads[0]} ${reads[1]} -t_db ${params.resfinder_db} -o ${meta.id} -1t1 -nc -t ${task.cpus}
+    
+    # 3. Calculate Normalized Metrics (Depth)
+    # Extract the Template Name (col 1) and Depth (col 9) from the KMA .res file. 
+    # Depth is length-normalized, making it vastly superior to raw counts.
+    echo "${meta.id}" > ${meta.id}_ARG_counts.tsv
+
+    grep -v "^#" ${meta.id}.res \
+        | awk 'BEGIN{OFS="\\t"} {print \$1, \$4, \$6, \$9}' \
+        | sed '1i Gene\\tTemplate_Length\\tTemplate_Coverage\\tDepth' \
+        > ${meta.id}_ARG_counts.tsv
+
+    """
+
 }
 
 process ARG_MAPPED {
@@ -136,31 +201,75 @@ process ARG_COUNT {
 
 
 process MERGE_ARG_COUNTS {
+    tag "Merge_ARG_KMA"
+    
+    // 1. Environment Management: Guarantee pandas is available
+    container 'quay.io/biocontainers/pandas:1.4.3'
+    
+    // 2. Resource Management: Prevent OOM errors on large outer joins
+    cpus 1
+    memory '8 GB'
+    
     publishDir "${params.outdir}/Final_Results", mode: 'copy'
 
     input:
-    // Takes a collected list of all individual count files
     path count_files
 
     output:
-    path "Master_ARG_Count_Matrix.tsv"
-
+    path "Master_ARG_RawDepth_Matrix.tsv", emit: depth_matrix
+    path "Master_ARG_TPM_Matrix.tsv",      emit: tpm_matrix
+    
     script:
+    // 3. Groovy Array Injection: Convert Nextflow path list to a valid Python list string
+    def py_file_list = count_files.collect { "'${it}'" }.join(', ')
+
     """
-    # 1. Extract the 'Gene' column from the very first file to use as our row names
-    first_file=\$(ls *_ARG_counts.tsv | head -n 1)
-    cut -f1 \$first_file > __genes.tmp
+    #!/usr/bin/env python3
+    import pandas as pd
+    import os
 
-    # 2. Extract ONLY the count columns (Column 2) from all files and save as temps
-    for f in *_ARG_counts.tsv; do
-        cut -f2 \$f > \${f}.col.tmp
-    done
+    input_files = [${py_file_list}]
 
-    # 3. Paste the genes and all the sample count columns together side-by-side
-    paste __genes.tmp *.col.tmp > Master_ARG_Count_Matrix.tsv
+    if not input_files:
+        raise RuntimeError("No input files provided by Nextflow.")
 
-    # 4. Clean up the temporary files
-    rm *.tmp
+    depth_dfs = []
+    tpm_dfs = []
+
+    for f in input_files:
+        # Read the file and set 'Gene' as the index
+        df = pd.read_csv(f, sep='\\t', index_col='Gene')
+        
+        # Extract sample name (e.g., 'LM0563_ARG_counts.tsv' -> 'LM0563')
+        sample_name = os.path.basename(f).replace('_ARG_counts.tsv', '')
+        
+        # 1. Isolate Raw Depth
+        depth_series = df[['Depth']].copy()
+        depth_series.columns = [sample_name]
+        depth_dfs.append(depth_series)
+        
+        # 2. Calculate TPM
+        tpm_series = depth_series.copy()
+        total_depth = tpm_series[sample_name].sum()
+        
+        if total_depth > 0:
+            # TPM = (Gene Depth / Total Sample Depth) * 1,000,000
+            tpm_series[sample_name] = (tpm_series[sample_name] / total_depth) * 1e6
+            
+        tpm_dfs.append(tpm_series)
+
+    # Merge all samples into master dataframes
+    master_depth = pd.concat(depth_dfs, axis=1, join='outer').fillna(0).round(2)
+    master_tpm = pd.concat(tpm_dfs, axis=1, join='outer').fillna(0).round(2)
+
+    # Ensure the index has a clean name
+    master_depth.index.name = 'Gene'
+    master_tpm.index.name = 'Gene'
+
+    # Save both files
+    master_depth.to_csv("Master_ARG_RawDepth_Matrix.tsv", sep='\\t')
+    master_tpm.to_csv("Master_ARG_TPM_Matrix.tsv", sep='\\t')
+
     """
 }
 
@@ -169,6 +278,7 @@ workflow {
     // Read samplesheet and construct file paths
     def samples = Channel.fromPath(params.samplesheet)
         .splitCsv(header: true)
+        .unique { row -> row.sample_id }
         .map { row ->
             def meta = [id: row.sample_id]
             def read1 = file("${params.reads_dir}/${row.sample_id}_R1.fastq.gz")
@@ -204,10 +314,17 @@ workflow {
     REMOVE_HOST_HOSTILE(FASTP_DECONTAMINATE.out.reads, hostile_idx_ch)
 
 
+    // Map to ResFinder, Filter, and Quantify using KMA
+    ARG_KMA(REMOVE_HOST_HOSTILE.out.reads)
+
+    // Merge everything using your robust Pandas script
+    MERGE_ARG_COUNTS(ARG_KMA.out.counts.collect())
+
+
     // METAPHLAN(combined_read_pairs_ch)
-    ARG_BOWTIE(REMOVE_HOST_HOSTILE.out.reads)
-    ARG_MAPPED(ARG_BOWTIE.out)
-    count_ch = ARG_COUNT(ARG_MAPPED.out)
+    // ARG_BOWTIE(REMOVE_HOST_HOSTILE.out.reads)
+    // ARG_MAPPED(ARG_BOWTIE.out)
+    // count_ch = ARG_COUNT(ARG_MAPPED.out)
 
     // Collects all individual files into a single list and merges them
     // MERGE_ARG_COUNTS( count_ch.collect() )
