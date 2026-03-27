@@ -2,18 +2,18 @@
 
 nextflow.enable.dsl = 2
 
-params.metaphlan_db = "/home_beegfs/edgars01/DB/metaphlan_db"
-params.resfinder_db = "/home_beegfs/edgars01/DB/resfinder_db/all"
+params.metaphlan_db = "DB/metaphlan_db"
+params.resfinder_db = "DB/resfinder_db/all"
 
-params.projPath = "/home_beegfs/edgars01/Antibiotic_Resistance/Metagenome/AR_Human"
-params.outdir = "${params.projPath}/results/2026-02-19"
+params.projPath = ""
+params.outdir = "${params.projPath}/results/202x-xx-xx"
 
-params.samplesheet = "${params.projPath}/data/2026-02-19/samplesheet_2026-02-19.tsv"
+params.samplesheet = "${params.projPath}/data/202x-xx-xx/samplesheet_202x-xx-xx.tsv"
 
-params.reads_dir = "${params.projPath}/data/2026-02-19/merged_reads"  // Directory containing all FASTQ files
+params.reads_dir = "${params.projPath}/data/202x-xx-xx/merged_reads"  // Directory containing all FASTQ files
 
 // Define the folder containing the index files
-hostile_idx_ch = Channel.fromPath('/home_beegfs/edgars01/.local/share/hostile', type: 'dir').first()
+hostile_idx_ch = Channel.fromPath('.local/share/hostile', type: 'dir').first()
 
 
 //params.human_reference = '/path/to/human_genome.fasta'
@@ -34,67 +34,6 @@ include { MULTIQC as MULTIQC_CLEAN } from "../modules/preProc.nf" addParams(OUTP
 include { REMOVE_HOST_HOSTILE } from "../modules/preProc.nf" addParams(OUTPUT: "${params.outdir}/host_removed")
 
 
-
-process METAPHLAN {
-    
-    publishDir "${params.outdir}/Metaphlan", mode: 'copy'
-
-    input:
-    tuple val(sample), path(reads)
-
-    output:
-    path "${sample}_bowtie2out.bz2"
-    path "${sample}_profile.txt"
-
-    cpus 8
-    memory '64 GB'
-    time = '1d'
-
-    script:
-    """
-    module load 'bio/metaphlan4/4.0.6-conda'
-
-    metaphlan ${reads[0]},${reads[1]} --input_type fastq --bowtie2db ${params.metaphlan_db} \
-    --bowtie2out ${sample}_bowtie2out.bz2 --nproc ${task.cpus} -o ${sample}_profile.txt
-    """
-}
-
-process ARG_BOWTIE {
-    tag "${meta.id}" 
-    publishDir "${params.outdir}/Bowtie", mode: 'symlink'
-
-    input:
-    tuple val(meta), path(reads)
-
-    output:
-    tuple val(meta), path("${meta.id}_ARG.bam")
-
-    cpus 6
-    memory '64 GB'
-    time = '1d'
-
-    script:
-    """
-    module load 'bio/bowtie2/2.4.2'
-    module load 'bio/samtools-1.9'
-
-    # --------------------------------------------------------------------------------
-    # Align microbial reads to the ResFinder database
-    # --------------------------------------------------------------------------------
-    # -x : Path to the ResFinder Bowtie2 index prefix
-    # -1 / -2 : Forward and reverse input reads
-    # -D 20 -R 3 -N 1 -L 20 -i S,1,0.5 : Custom search and seed parameters.
-    #      (These heavily increase alignment sensitivity to catch highly mutated 
-    #       or novel resistance genes that slightly differ from the reference)
-    # --------------------------------------------------------------------------------
-
-
-    bowtie2 -x ${params.resfinder_db} -1 ${reads[0]} -2 ${reads[1]} \
-    -D 20 -R 3 -N 1 -L 20 -i S,1,0.5 \
-    --threads ${task.cpus} | samtools view -@ ${task.cpus} -Sb - > ${meta.id}_ARG.bam
-    """
-}
-
 process ARG_KMA {
     tag "${meta.id}" 
     publishDir "${params.outdir}/KMA", mode: 'symlink'
@@ -114,12 +53,11 @@ process ARG_KMA {
     
     """
 
-   
     # -ipe: Paired-end reads
     # -t_db: KMA database prefix
     # -1t1: One read to one template (forces strict assignment, prevents double-counting)
     # -nc: No consensus building (saves memory/time)
-     ~/tools/kma/kma -ipe ${reads[0]} ${reads[1]} -t_db ${params.resfinder_db} -o ${meta.id} -1t1 -nc -t ${task.cpus}
+    ~/tools/kma/kma -ipe ${reads[0]} ${reads[1]} -t_db ${params.resfinder_db} -o ${meta.id} -1t1 -nc -t ${task.cpus}
     
     # 3. Calculate Normalized Metrics (Depth)
     # Extract the Template Name (col 1) and Depth (col 9) from the KMA .res file. 
@@ -173,29 +111,6 @@ process ARG_MAPPED {
     
     samtools index -@ ${task.cpus} ${meta.id}_ARG_mapped.bam
 
-    """
-}
-
-process ARG_COUNT {
-    tag "${meta.id}"
-    publishDir "${params.outdir}/Bowtie/Counts", mode: 'copy'
-
-    input:
-    tuple val(meta), path(bam), path(bai)
-
-    output:
-    path "${meta.id}_ARG_counts"
-
-    cpus 2
-    memory '6 GB'
-
-    script:
-    """
-    
-    module load 'bio/samtools-1.9'
-    
-    echo -e ${meta.id} > ${meta.id}_ARG_counts
-    samtools idxstats ${bam} | grep -v "*" | cut -f1,3 >> ${meta.id}_ARG_counts
     """
 }
 
@@ -285,8 +200,6 @@ workflow {
             def read2 = file("${params.reads_dir}/${row.sample_id}_R2.fastq.gz")
             [meta, [read1, read2]]
         }
-
-
     
     // QC on raw reads
     FASTQC_RAW(samples)
@@ -295,7 +208,6 @@ workflow {
     MULTIQC_RAW(
         FASTQC_RAW.out.zip.map { meta, zip -> zip }.collect() 
     )
- 
     
     // Decontaminate and quality filter
     FASTP_DECONTAMINATE(samples)
@@ -304,7 +216,7 @@ workflow {
     FASTQC_CLEAN(FASTP_DECONTAMINATE.out.reads)
     
     // --- Aggregate clean QC with fastp reports ---
-    // We use .mix() to combine both channels into one, then .collect() them into a single list
+    // use .mix() to combine both channels into one, then .collect() them into a single list
     def clean_reports = FASTQC_CLEAN.out.zip.map { meta, zip -> zip }
     .mix( FASTP_DECONTAMINATE.out.json.map { meta, json -> json } )
     .collect()
@@ -319,14 +231,5 @@ workflow {
 
     // Merge everything using your robust Pandas script
     MERGE_ARG_COUNTS(ARG_KMA.out.counts.collect())
-
-
-    // METAPHLAN(combined_read_pairs_ch)
-    // ARG_BOWTIE(REMOVE_HOST_HOSTILE.out.reads)
-    // ARG_MAPPED(ARG_BOWTIE.out)
-    // count_ch = ARG_COUNT(ARG_MAPPED.out)
-
-    // Collects all individual files into a single list and merges them
-    // MERGE_ARG_COUNTS( count_ch.collect() )
 
 }
