@@ -2,22 +2,6 @@
 
 This is a Nextflow-based metagenomics pipeline designed to identify and quantify Antimicrobial Resistance Genes (ARGs) from paired-end sequencing data. This workflow integrates quality control, host decontamination, and K-mer-based alignment against the ResFinder database to produce length-normalized (TPM) abundance matrices.
 
-## Table of Contents
-
-- [Pipeline Overview](#pipeline-overview)
-- [Key Features](#key-features)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Input Files](#input-files)
-- [Configuration & Parameters](#configuration--parameters)
-- [Quick Start](#quick-start)
-- [Outputs](#outputs)
-- [Core Processes](#core-processes)
-- [Troubleshooting](#troubleshooting)
-- [License](#license)
-- [Contributing](#contributing)
-- [Contact](#contact)
-
 ## Pipeline Overview
 
 The pipeline executes the following stages:
@@ -95,6 +79,13 @@ graph TD
    conda install pandas
    ```
 
+Or use Docker/Singularity containers as defined in the workflow.
+with singularity enabled:
+```bash
+nextflow run workflow/countARGs.nf -profile singularity
+```
+
+
 4. Download and prepare databases:
    - ResFinder: Download and index as per [KMA documentation](https://bitbucket.org/genomicepidemiology/kma/src/master/).
    - Place databases in `DB/` directory.
@@ -164,22 +155,10 @@ Results are in the specified `outdir`:
 - TPM = (Gene Depth / Total Sample Depth) × 1,000,000.
 - Resources: 1 CPU, 8GB RAM.
 
-## Troubleshooting
-
-- **Database errors**: Ensure ResFinder DB is indexed and paths are correct.
-- **Memory issues**: Increase RAM allocation for KMA or reduce batch size.
-- **File not found**: Verify samplesheet format and FASTQ naming.
-- **Resume runs**: Use `nextflow run -resume` for partial reruns.
-- **Container issues**: Check Singularity/Docker installation.
-
-## License
-
-[Specify your license, e.g., MIT]
-
 ## Contributing
 
 Contributions welcome! Please submit issues/PRs on GitHub.
 
 ## Contact
 
-Edgars Liepa - [Your email/contact]
+Edgars Liepa - edgars.liepa@biomed.lu.lv
